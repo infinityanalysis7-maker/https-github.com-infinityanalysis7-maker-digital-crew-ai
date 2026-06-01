@@ -1,6 +1,6 @@
 import os
-import sqlite3
 import json
+import psycopg2  # Requires: pip install psycopg2-binary
 from datetime import datetime
 import requests
 from dotenv import load_dotenv
@@ -11,7 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-# 1. Initialize the FastAPI Web Port
+# 1. Initialize
+load_dotenv()
 app = FastAPI(title="Digital Crew AI Engine")
 
 app.add_middleware(
@@ -22,41 +23,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. Load Secret Keys
-load_dotenv()
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY")
 )
 FREE_BRAIN = "openrouter/auto"
 
-# 3. Database Path (Fixed for Render & Local)
-# Only defined ONCE here to prevent conflicts.
-if os.environ.get("RENDER"):
-    DB_FILE = "/tmp/leads.db"
-else:
-    DB_FILE = "leads.db"
+# 2. Database Connection (Cloud-based)
+# Ensure you set the DATABASE_URL in your Render Environment Variables
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS scans (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            url TEXT NOT NULL,
-            scout_analysis TEXT,
-            builder_blueprint TEXT,
-            salesman_pitch TEXT,
-            linkedin_pitch TEXT,
-            timestamp TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
-    print(f"✅ Database initialized at: {DB_FILE}")
-
-# Initialize Database
-init_db()
+def save_to_db(url, scout, builder, sales, linkedin):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO scans (url, scout_analysis, builder_blueprint, salesman_pitch, linkedin_pitch, timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (url, scout, builder, sales, linkedin, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print(f"✅ Data saved to Cloud DB for {url}")
+    except Exception as e:
+        print(f"❌ Database save failed: {e}")
 
 class AnalyzeRequest(BaseModel):
     url: str
@@ -80,9 +70,7 @@ def classify_target_site(scraped_text: str) -> dict:
             model=FREE_BRAIN,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": """You are an elite business model auditor. 
-                Classify: B2B_SAAS, E_COMMERCE, CONTENT_INFO, LOCAL_BUSINESS.
-                Respond ONLY with JSON: {"site_type": "...", "core_conversion_goal": "...", "allowed_pricing_tier": "..."}"""},
+                {"role": "system", "content": "Classify: B2B_SAAS, E_COMMERCE, CONTENT_INFO, LOCAL_BUSINESS. Respond ONLY with JSON: {'site_type': '...', 'core_conversion_goal': '...', 'allowed_pricing_tier': '...'}"},
                 {"role": "user", "content": scraped_text[:3000]}
             ]
         )
@@ -104,18 +92,11 @@ async def generate_crew_stream(target_url: str):
     }.get(pricing_tier, "Keep budget allocations inside a $5,000 - $15,000 range.")
 
     # 🤖 Agent 1: Scout
-    scout_res = client.chat.completions.create(
-        model=FREE_BRAIN,
-        messages=[{"role": "system", "content": f"You are a cyber auditor for {site_type}. Find 3 flaws targeting {goal}. Format: Markdown list."}, {"role": "user", "content": site_text}]
-    )
+    scout_res = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": f"You are a cyber auditor for {site_type}. Find 3 flaws targeting {goal}. Format: Markdown list."}, {"role": "user", "content": site_text}])
     scout_report = scout_res.choices[0].message.content
     
     # 🤖 Agent 2: Builder
-    builder_stream = client.chat.completions.create(
-        model=FREE_BRAIN,
-        messages=[{"role": "system", "content": f"Build a fix matrix for {site_type}. Budget: {pricing_rules}. Include Commercial Quote section."}, {"role": "user", "content": scout_report}],
-        stream=True
-    )
+    builder_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": f"Build a fix matrix for {site_type}. Budget: {pricing_rules}. Include Commercial Quote section."}, {"role": "user", "content": scout_report}], stream=True)
     full_builder_report = ""
     for chunk in builder_stream:
         token = chunk.choices[0].delta.content or ""
@@ -124,11 +105,7 @@ async def generate_crew_stream(target_url: str):
             yield f"data: {json.dumps({'builder_blueprint': token})}\n\n"
 
     # 🤖 Agent 3: Salesman
-    salesman_stream = client.chat.completions.create(
-        model=FREE_BRAIN,
-        messages=[{"role": "system", "content": f"Draft a consultative sales email for {site_type}. Target: {goal}."}, {"role": "user", "content": full_builder_report}],
-        stream=True
-    )
+    salesman_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": f"Draft a consultative sales email for {site_type}. Target: {goal}."}, {"role": "user", "content": full_builder_report}], stream=True)
     full_sales_pitch = ""
     for chunk in salesman_stream:
         token = chunk.choices[0].delta.content or ""
@@ -137,11 +114,7 @@ async def generate_crew_stream(target_url: str):
             yield f"data: {json.dumps({'salesman_pitch': token})}\n\n"
 
     # 🤖 Agent 4: LinkedIn
-    linkedin_stream = client.chat.completions.create(
-        model=FREE_BRAIN,
-        messages=[{"role": "system", "content": f"Draft a LinkedIn DM for {site_type}. Target: {goal}."}, {"role": "user", "content": full_builder_report}],
-        stream=True
-    )
+    linkedin_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": f"Draft a LinkedIn DM for {site_type}. Target: {goal}."}, {"role": "user", "content": full_builder_report}], stream=True)
     full_linkedin_pitch = ""
     for chunk in linkedin_stream:
         token = chunk.choices[0].delta.content or ""
@@ -149,21 +122,11 @@ async def generate_crew_stream(target_url: str):
             full_linkedin_pitch += token
             yield f"data: {json.dumps({'linkedin_pitch': token})}\n\n"
 
-    # Save to DB
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute('''INSERT INTO scans (url, scout_analysis, builder_blueprint, salesman_pitch, linkedin_pitch, timestamp) VALUES (?, ?, ?, ?, ?, ?)''', 
-                       (target_url, scout_report, full_builder_report, full_sales_pitch, full_linkedin_pitch, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"Database save failed: {e}")
+    # SAVE TO CLOUD DB
+    save_to_db(target_url, scout_report, full_builder_report, full_sales_pitch, full_linkedin_pitch)
 
     yield "data: [DONE]\n\n"
 
 @app.post("/analyze")
 async def analyze_website_endpoint(request_data: AnalyzeRequest):
-    if not request_data.url:
-        raise HTTPException(status_code=400, detail="URL cannot be empty")
     return StreamingResponse(generate_crew_stream(request_data.url), media_type="text/event-stream")
