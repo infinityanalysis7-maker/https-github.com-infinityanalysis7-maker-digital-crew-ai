@@ -38,6 +38,17 @@ if os.environ.get("RENDER"):
 else:
     DB_FILE = "leads.db"
 
+d# --- DATABASE PATH FIX FOR RENDER ---
+# This ensures it writes to /tmp, which is the only place Render allows!
+# --- DATABASE PATH FIX FOR RENDER ---
+# If running on Render, use /tmp. Otherwise, use local file.
+import os
+
+if os.environ.get("RENDER"):
+    DB_FILE = "/tmp/leads.db"
+else:
+    DB_FILE = "leads.db"
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -56,6 +67,7 @@ def init_db():
     conn.close()
     print(f"✅ Database initialized at: {DB_FILE}")
 
+# Initialize
 init_db()
 
 class AnalyzeRequest(BaseModel):
