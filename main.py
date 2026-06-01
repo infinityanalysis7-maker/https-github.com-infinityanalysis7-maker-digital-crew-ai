@@ -31,6 +31,8 @@ client = OpenAI(
 FREE_BRAIN = "openrouter/auto"
 
 # FIX: Render requires writing to /tmp for persistent file operations
+# --- DATABASE PATH FIX FOR RENDER ---
+# This ensures it writes to /tmp, which is the only place Render allows!
 if os.environ.get("RENDER"):
     DB_FILE = "/tmp/leads.db"
 else:
