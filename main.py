@@ -22,14 +22,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. Load Secret Keys
+# 2. Load Secret Keys & Database Path
 load_dotenv()
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY")
 )
 FREE_BRAIN = "openrouter/auto"
-DB_FILE = "leads.db"
+
+# FIX: Render requires writing to /tmp for persistent file operations
+if os.environ.get("RENDER"):
+    DB_FILE = "/tmp/leads.db"
+else:
+    DB_FILE = "leads.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -47,6 +52,7 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+    print(f"✅ Database initialized at: {DB_FILE}")
 
 init_db()
 
