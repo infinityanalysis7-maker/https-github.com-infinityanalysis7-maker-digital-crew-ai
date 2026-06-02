@@ -92,10 +92,15 @@ async def generate_crew_stream(target_url: str):
         "high": "$15k-$30k"
     }.get(pricing_tier, "$5k-$15k")
 
-    # 🤖 Agent 1: Scout (Strict)
+    # 🤖 Agent 1: Scout (Stream Critical Flaws)
     scout_prompt = f"You are a UX auditor. Identify 3 critical conversion flaws for {site_type}. Format: Markdown list. NO intro, NO filler. Keep each point under 20 words."
-    scout_res = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": scout_prompt}, {"role": "user", "content": site_text}])
-    scout_report = scout_res.choices[0].message.content
+    scout_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": scout_prompt}, {"role": "user", "content": site_text}], stream=True)
+    scout_report = ""
+    for chunk in scout_stream:
+        token = chunk.choices[0].delta.content or ""
+        if token:
+            scout_report += token
+            yield f"data: {json.dumps({'scout_analysis': token})}\n\n"
     
     # 🤖 Agent 2: Builder (Consultant-Grade Audit)
     builder_sys = f"""Act as a World-Class B2B SaaS Growth Consultant. Perform an immediate, high-impact conversion audit on the provided website text. Your goal is to identify why the site is leaking revenue and provide a professional, executable strategy.
