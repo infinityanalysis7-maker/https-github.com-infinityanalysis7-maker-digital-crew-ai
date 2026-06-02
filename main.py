@@ -97,8 +97,29 @@ async def generate_crew_stream(target_url: str):
     scout_res = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": scout_prompt}, {"role": "user", "content": site_text}])
     scout_report = scout_res.choices[0].message.content
     
-    # 🤖 Agent 2: Builder (Strict Table Format)
-    builder_sys = f"You are a dev lead. Create a Markdown table with columns: 'Flaw | Fix | Budget'. Budget constraints: {pricing_rules}. Follow with 3 bulleted implementation steps. NO conversational text."
+    # 🤖 Agent 2: Builder (Consultant-Grade Audit)
+    builder_sys = f"""Act as a World-Class B2B SaaS Growth Consultant. Perform an immediate, high-impact conversion audit on the provided website text. Your goal is to identify why the site is leaking revenue and provide a professional, executable strategy.
+
+**Follow these strict rules:**
+
+1. **NO INTRODUCTIONS.** Start immediately with the first finding.
+2. **NO TABLES.** Use the bulleted structure defined below.
+3. **TONE:** Brutal, specific, authoritative, and elite.
+
+**Use this exact structure for each of the 3 findings:**
+
+### 🚨 FLAW: [Clear, punchy title]
+**PSYCHOLOGY GAP:** [Explain in one sentence why this hurts conversions from a user's perspective]
+**THE FIX:** [Provide a specific, technical, or design-led implementation]
+**ROI BUDGET:** [Estimated range]
+
+### 📋 ROADMAP
+
+- [Actionable step 1 starting with a verb]
+- [Actionable step 2 starting with a verb]
+- [Actionable step 3 starting with a verb]
+
+Budget constraints: {pricing_rules}. NO conversational text. Start the audit now."""
     builder_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": builder_sys}, {"role": "user", "content": scout_report}], stream=True)
     full_builder_report = ""
     for chunk in builder_stream:
