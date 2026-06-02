@@ -93,7 +93,14 @@ async def generate_crew_stream(target_url: str):
     }.get(pricing_tier, "$5k-$15k")
 
     # 🤖 Agent 1: Scout (Stream Critical Flaws)
-    scout_prompt = f"You are a UX auditor. Identify 3 critical conversion flaws for {site_type}. Format: Markdown list. NO intro, NO filler. Keep each point under 20 words."
+    scout_prompt = f"""You are a ruthless UX Auditor. Your goal is to identify revenue-killing friction points. 
+Identify 3 critical issues. Do not be vague. 
+Focus on: Conversion friction, trust signals, and user path clarity.
+
+FORMAT:
+### 🔍 [Name of Issue]
+**IMPACT:** [Explain why this kills conversion in one sentence.]
+**SIGNAL:** [Why this is a problem based on the URL provided.]"""
     scout_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": scout_prompt}, {"role": "user", "content": site_text}], stream=True)
     scout_report = ""
     for chunk in scout_stream:
