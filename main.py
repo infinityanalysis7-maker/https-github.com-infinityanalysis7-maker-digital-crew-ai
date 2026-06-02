@@ -1,17 +1,21 @@
 import os
 import json
-import psycopg2  # Requires: pip install psycopg2-binary
+import psycopg2 
+import urllib3
 from datetime import datetime
 import requests
 from dotenv import load_dotenv
 from openai import OpenAI
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-# 1. Initialize
+# Suppress SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Initialize Application
 load_dotenv()
 app = FastAPI(title="Digital Crew AI Engine")
 
@@ -29,12 +33,11 @@ client = OpenAI(
 )
 FREE_BRAIN = "openrouter/auto"
 
-# 2. Database Connection (Cloud-based)
-# Ensure you set the DATABASE_URL in your Render Environment Variables
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def save_to_db(url, scout, builder, sales, linkedin):
     try:
+        if not DATABASE_URL: return
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute('''
@@ -44,7 +47,6 @@ def save_to_db(url, scout, builder, sales, linkedin):
         conn.commit()
         cursor.close()
         conn.close()
-        print(f"✅ Data saved to Cloud DB for {url}")
     except Exception as e:
         print(f"❌ Database save failed: {e}")
 
@@ -57,8 +59,7 @@ def fetch_real_website_text(url):
         response = requests.get(url, headers=headers, timeout=12, verify=False)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
-            for script in soup(["script", "style"]):
-                script.extract()
+            for script in soup(["script", "style"]): script.extract()
             return soup.get_text(separator=' ')[:4000]
         return f"Error: Status code {response.status_code}"
     except Exception as e:
@@ -70,7 +71,7 @@ def classify_target_site(scraped_text: str) -> dict:
             model=FREE_BRAIN,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": "Classify: B2B_SAAS, E_COMMERCE, CONTENT_INFO, LOCAL_BUSINESS. Respond ONLY with JSON: {'site_type': '...', 'core_conversion_goal': '...', 'allowed_pricing_tier': '...'}"},
+                {"role": "system", "content": "Classify: B2B_SAAS, E_COMMERCE, CONTENT_INFO, LOCAL_BUSINESS. Respond ONLY with JSON."},
                 {"role": "user", "content": scraped_text[:3000]}
             ]
         )
@@ -82,21 +83,23 @@ async def generate_crew_stream(target_url: str):
     site_text = fetch_real_website_text(target_url)
     meta = classify_target_site(site_text)
     site_type = meta.get("site_type", "B2B_SAAS")
-    goal = meta.get("core_conversion_goal", "system optimization")
+    goal = meta.get("core_conversion_goal", "conversion")
     pricing_tier = meta.get("allowed_pricing_tier", "medium")
 
     pricing_rules = {
-        "low": "Keep pricing strictly realistic. $1,500 - $4,500 range.",
-        "medium": "Standard structural overhauls, $5,000 - $12,000 range.",
-        "high": "Complex enterprise integrations, $15,000 - $30,000+ range."
-    }.get(pricing_tier, "Keep budget allocations inside a $5,000 - $15,000 range.")
+        "low": "$1k-$4k",
+        "medium": "$5k-$12k",
+        "high": "$15k-$30k"
+    }.get(pricing_tier, "$5k-$15k")
 
-    # 🤖 Agent 1: Scout
-    scout_res = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": f"You are a cyber auditor for {site_type}. Find 3 flaws targeting {goal}. Format: Markdown list."}, {"role": "user", "content": site_text}])
+    # 🤖 Agent 1: Scout (Strict)
+    scout_prompt = f"You are a UX auditor. Identify 3 critical conversion flaws for {site_type}. Format: Markdown list. NO intro, NO filler. Keep each point under 20 words."
+    scout_res = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": scout_prompt}, {"role": "user", "content": site_text}])
     scout_report = scout_res.choices[0].message.content
     
-    # 🤖 Agent 2: Builder
-    builder_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": f"Build a fix matrix for {site_type}. Budget: {pricing_rules}. Include Commercial Quote section."}, {"role": "user", "content": scout_report}], stream=True)
+    # 🤖 Agent 2: Builder (Strict Table Format)
+    builder_sys = f"You are a dev lead. Create a Markdown table with columns: 'Flaw | Fix | Budget'. Budget constraints: {pricing_rules}. Follow with 3 bulleted implementation steps. NO conversational text."
+    builder_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": builder_sys}, {"role": "user", "content": scout_report}], stream=True)
     full_builder_report = ""
     for chunk in builder_stream:
         token = chunk.choices[0].delta.content or ""
@@ -104,8 +107,9 @@ async def generate_crew_stream(target_url: str):
             full_builder_report += token
             yield f"data: {json.dumps({'builder_blueprint': token})}\n\n"
 
-    # 🤖 Agent 3: Salesman
-    salesman_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": f"Draft a consultative sales email for {site_type}. Target: {goal}."}, {"role": "user", "content": full_builder_report}], stream=True)
+    # 🤖 Agent 3: Salesman (Short)
+    salesman_sys = f"Draft a concise sales email (max 100 words) for {site_type}. Focus on ROI and pain point. Use short paragraphs. No fluff."
+    salesman_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": salesman_sys}, {"role": "user", "content": full_builder_report}], stream=True)
     full_sales_pitch = ""
     for chunk in salesman_stream:
         token = chunk.choices[0].delta.content or ""
@@ -113,8 +117,9 @@ async def generate_crew_stream(target_url: str):
             full_sales_pitch += token
             yield f"data: {json.dumps({'salesman_pitch': token})}\n\n"
 
-    # 🤖 Agent 4: LinkedIn
-    linkedin_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": f"Draft a LinkedIn DM for {site_type}. Target: {goal}."}, {"role": "user", "content": full_builder_report}], stream=True)
+    # 🤖 Agent 4: LinkedIn (Short)
+    linkedin_sys = f"Draft a 2-sentence LinkedIn DM for {site_type}. Extremely conversational and direct. No greeting."
+    linkedin_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": linkedin_sys}, {"role": "user", "content": full_builder_report}], stream=True)
     full_linkedin_pitch = ""
     for chunk in linkedin_stream:
         token = chunk.choices[0].delta.content or ""
@@ -122,9 +127,7 @@ async def generate_crew_stream(target_url: str):
             full_linkedin_pitch += token
             yield f"data: {json.dumps({'linkedin_pitch': token})}\n\n"
 
-    # SAVE TO CLOUD DB
     save_to_db(target_url, scout_report, full_builder_report, full_sales_pitch, full_linkedin_pitch)
-
     yield "data: [DONE]\n\n"
 
 @app.post("/analyze")
