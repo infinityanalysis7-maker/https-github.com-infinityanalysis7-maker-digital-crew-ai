@@ -131,8 +131,12 @@ Budget constraints: {pricing_rules}. NO introductions. Start with the first flaw
             full_builder_report += token
             yield f"data: {json.dumps({'builder_blueprint': token})}\n\n"
 
-    # 🤖 Agent 3: Salesman (Short)
-    salesman_sys = f"Draft a concise sales email (max 100 words) for {site_type}. Focus on ROI and pain point. Use short paragraphs. No fluff."
+    # 🤖 Agent 3: Salesman (Close-Ready Email)
+    salesman_sys = f"""You are a Senior B2B SaaS Closer. Write a 5-line outreach email.
+- NO PLACEHOLDERS like [Pain Point]. 
+- Infer the pain from the Builder's analysis and inject it into the email.
+- Tone: Direct, punchy, value-first.
+- NO FLUFF."""
     salesman_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": salesman_sys}, {"role": "user", "content": full_builder_report}], stream=True)
     full_sales_pitch = ""
     for chunk in salesman_stream:
