@@ -80,18 +80,26 @@ def classify_target_site(scraped_text: str) -> dict:
         return {"site_type": "B2B_SAAS", "core_conversion_goal": "User subscriptions", "allowed_pricing_tier": "medium"}
 
 def extract_final_output(full_text: str) -> str:
-    """Extract clean FINAL OUTPUT section, stripping the marker itself."""
+    """
+    Extract clean FINAL OUTPUT section. 
+    Fallback: if no marker found, return the whole text.
+    """
+    # Try ### FINAL OUTPUT first
     if "### FINAL OUTPUT" in full_text:
-        # Split on ### FINAL OUTPUT and take everything after it
         parts = full_text.split("### FINAL OUTPUT", 1)
-        if len(parts) > 1:
-            return parts[1].strip()
+        result = parts[1].strip() if len(parts) > 1 else ""
+        if result:  # Only return if non-empty
+            return result
+    
+    # Try **FINAL OUTPUT:**
     if "**FINAL OUTPUT:**" in full_text:
-        # Handle bold version
         parts = full_text.split("**FINAL OUTPUT:**", 1)
-        if len(parts) > 1:
-            return parts[1].strip()
-    return full_text
+        result = parts[1].strip() if len(parts) > 1 else ""
+        if result:
+            return result
+    
+    # Fallback: return everything, assume it's all output
+    return full_text.strip()
 
 async def generate_crew_stream(target_url: str):
     site_text = fetch_real_website_text(target_url)
@@ -113,7 +121,7 @@ My Service: We build custom AI chatbots that reduce customer support costs by 40
 Target Audience: We sell to E-commerce brands with $1M+ ARR.
 """
 
-    # 🤖 Agent 1: Scout (With Chain of Thought - Clean Stream)
+    # 🤖 Agent 1: Scout (Collect full response, then stream clean output)
     scout_prompt = f"""You are a ruthless UX Auditor. Your goal is to identify revenue-killing friction points. 
 Identify 3 critical issues. Do not be vague. 
 Focus on: Conversion friction, trust signals, and user path clarity.
@@ -133,29 +141,17 @@ REFINE: Correct your analysis based on critique.
     
     scout_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": scout_prompt}, {"role": "user", "content": site_text}], stream=True)
     full_scout_raw = ""
-    scout_report = ""
-    found_final_output = False
-    
     for chunk in scout_stream:
         token = chunk.choices[0].delta.content or ""
         full_scout_raw += token
-        
-        if "### FINAL OUTPUT" in full_scout_raw and not found_final_output:
-            found_final_output = True
-            # Extract everything after the marker
-            scout_report = full_scout_raw.split("### FINAL OUTPUT", 1)[1].strip()
-            # Stream the clean portion (without the marker)
-            yield f"data: {json.dumps({'scout_analysis': scout_report})}\n\n"
-        elif found_final_output:
-            # Continue accumulating and streaming
-            scout_report = full_scout_raw.split("### FINAL OUTPUT", 1)[1].strip()
-            # Stream only the new token
-            yield f"data: {json.dumps({'scout_analysis': token})}\n\n"
     
-    # Final clean scout_report for downstream use
+    # Extract clean output after full collection
     scout_report = extract_final_output(full_scout_raw)
+    
+    # Stream the clean output to frontend
+    yield f"data: {json.dumps({'scout_analysis': scout_report})}\n\n"
 
-    # 🤖 Agent 2: Builder (CFO-Grade, With Chain of Thought - Clean Stream)
+    # 🤖 Agent 2: Builder (Collect full response, then stream clean output)
     builder_sys = f"""You are a Chief Growth Officer. You don't offer suggestions; you offer financial solutions.
 For each flaw found by the Scout, you MUST quantify the cost of doing nothing.
 
@@ -179,24 +175,17 @@ Budget constraints: {pricing_rules}. NO introductions. Start with the first flaw
     
     builder_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": builder_sys}, {"role": "user", "content": scout_report}], stream=True)
     full_builder_raw = ""
-    full_builder_report = ""
-    found_final_output = False
-    
     for chunk in builder_stream:
         token = chunk.choices[0].delta.content or ""
         full_builder_raw += token
-        
-        if "### FINAL OUTPUT" in full_builder_raw and not found_final_output:
-            found_final_output = True
-            full_builder_report = full_builder_raw.split("### FINAL OUTPUT", 1)[1].strip()
-            yield f"data: {json.dumps({'builder_blueprint': full_builder_report})}\n\n"
-        elif found_final_output:
-            full_builder_report = full_builder_raw.split("### FINAL OUTPUT", 1)[1].strip()
-            yield f"data: {json.dumps({'builder_blueprint': token})}\n\n"
     
+    # Extract clean output after full collection
     full_builder_report = extract_final_output(full_builder_raw)
+    
+    # Stream the clean output to frontend
+    yield f"data: {json.dumps({'builder_blueprint': full_builder_report})}\n\n"
 
-    # 🤖 Agent 3: Salesman (With Chain of Thought & User Context - Clean Stream)
+    # 🤖 Agent 3: Salesman (Collect full response, then stream clean output)
     salesman_sys = f"""You are a Senior B2B SaaS Closer. Write a 5-line outreach email.
 - NO PLACEHOLDERS like [Pain Point]. 
 - Infer the pain from the Builder's analysis and inject it into the email.
@@ -204,11 +193,13 @@ Budget constraints: {pricing_rules}. NO introductions. Start with the first flaw
 - NO FLUFF.
 
 **USER CONTEXT (Personalize your pitch to this identity):**
-{user_context}
+User Identity: I am a SaaS Agency Owner specializing in AI Automation.
+My Service: We build custom AI chatbots that reduce customer support costs by 40%.
+Target Audience: We sell to E-commerce brands with $1M+ ARR.
 
 **INTERNAL THOUGHT STEP (HIDE THIS IN FINAL OUTPUT):**
 ANALYZE: What are the specific flaws and revenue leaks the Builder found?
-CRITIQUE: How does OUR service (AI chatbots for support cost reduction) directly solve these?
+CRITIQUE: How does OUR service directly solve these?
 REFINE: Craft an email that explicitly connects the flaw to our solution.
 
 **THEN PROVIDE FINAL OUTPUT BELOW:**
@@ -217,24 +208,17 @@ REFINE: Craft an email that explicitly connects the flaw to our solution.
     
     salesman_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": salesman_sys}, {"role": "user", "content": full_builder_report}], stream=True)
     full_sales_raw = ""
-    full_sales_pitch = ""
-    found_final_output = False
-    
     for chunk in salesman_stream:
         token = chunk.choices[0].delta.content or ""
         full_sales_raw += token
-        
-        if "### FINAL OUTPUT" in full_sales_raw and not found_final_output:
-            found_final_output = True
-            full_sales_pitch = full_sales_raw.split("### FINAL OUTPUT", 1)[1].strip()
-            yield f"data: {json.dumps({'salesman_pitch': full_sales_pitch})}\n\n"
-        elif found_final_output:
-            full_sales_pitch = full_sales_raw.split("### FINAL OUTPUT", 1)[1].strip()
-            yield f"data: {json.dumps({'salesman_pitch': token})}\n\n"
     
+    # Extract clean output after full collection
     full_sales_pitch = extract_final_output(full_sales_raw)
+    
+    # Stream the clean output to frontend
+    yield f"data: {json.dumps({'salesman_pitch': full_sales_pitch})}\n\n"
 
-    # 🤖 Agent 4: Reviewer (Quality Control - Validation Only, No Stream Overwrite)
+    # 🤖 Agent 4: Reviewer (Validation Only, Non-blocking)
     reviewer_sys = f"""You are the Quality Control Director. Review the Builder's audit and the Salesman's email.
 CHECKLIST:
 1. Did the Salesman reference the SPECIFIC flaw the Builder found? (No generic language allowed)
@@ -242,17 +226,16 @@ CHECKLIST:
 3. Is the ROI calculation plausible and backed by the Builder's analysis?
 
 If ALL pass, output: "✅ ALIGNMENT VERIFIED"
-If ANY fail, output: "⚠️ MISALIGNMENT DETECTED - CORRECTIONS NEEDED"
+If ANY fail, output: "⚠️ MISALIGNMENT DETECTED"
 
-User Identity for context:
-{user_context}"""
+User Identity: Saas Agency Owner specializing in AI Automation. Service: Custom AI chatbots reducing support costs by 40%. Target: E-commerce brands with $1M+ ARR."""
     
     reviewer_input = f"BUILDER AUDIT:\n{full_builder_report}\n\nSALESMAN EMAIL:\n{full_sales_pitch}"
     reviewer_response = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": reviewer_sys}, {"role": "user", "content": reviewer_input}])
-    review_status = reviewer_response.choices[0].message.content
+    review_status = reviewer_response.choices[0].message.content.strip()
     yield f"data: {json.dumps({'review_status': review_status})}\n\n"
 
-    # 🤖 Agent 5: LinkedIn (With Chain of Thought - Clean Stream)
+    # 🤖 Agent 5: LinkedIn (Collect full response, then stream clean output)
     linkedin_sys = f"""Draft a 2-sentence LinkedIn DM for {site_type}. Extremely conversational and direct. No greeting.
 Use the Builder's findings to inform the tone and message.
 
@@ -264,28 +247,21 @@ REFINE: Make it personal, not templated.
     
     linkedin_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": linkedin_sys}, {"role": "user", "content": full_builder_report}], stream=True)
     full_linkedin_raw = ""
-    full_linkedin_pitch = ""
-    found_final_output = False
-    
     for chunk in linkedin_stream:
         token = chunk.choices[0].delta.content or ""
         full_linkedin_raw += token
-        
-        if "**FINAL OUTPUT:**" in full_linkedin_raw and not found_final_output:
-            found_final_output = True
-            full_linkedin_pitch = full_linkedin_raw.split("**FINAL OUTPUT:**", 1)[1].strip()
-            yield f"data: {json.dumps({'linkedin_pitch': full_linkedin_pitch})}\n\n"
-        elif found_final_output:
-            full_linkedin_pitch = full_linkedin_raw.split("**FINAL OUTPUT:**", 1)[1].strip()
-            yield f"data: {json.dumps({'linkedin_pitch': token})}\n\n"
     
+    # Extract clean output after full collection
     full_linkedin_pitch = extract_final_output(full_linkedin_raw)
+    
+    # Stream the clean output to frontend
+    yield f"data: {json.dumps({'linkedin_pitch': full_linkedin_pitch})}\n\n"
 
     # Save to database
     save_to_db(target_url, scout_report, full_builder_report, full_sales_pitch, full_linkedin_pitch)
     
-    # Send final consolidated payload with strict keys
-    yield f"data: {json.dumps({'scout_analysis': scout_report, 'builder_blueprint': full_builder_report, 'salesman_pitch': full_sales_pitch, 'linkedin_pitch': full_linkedin_pitch})}\n\n"
+    # Send final consolidated payload
+    yield f"data: {json.dumps({'scout_analysis': scout_report, 'builder_blueprint': full_builder_report, 'salesman_pitch': full_sales_pitch, 'linkedin_pitch': full_linkedin_pitch, 'review_status': review_status})}\n\n"
     yield "data: [DONE]\n\n"
 
 @app.post("/analyze")
