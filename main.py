@@ -109,29 +109,20 @@ FORMAT:
             scout_report += token
             yield f"data: {json.dumps({'scout_analysis': token})}\n\n"
     
-    # 🤖 Agent 2: Builder (Consultant-Grade Audit)
-    builder_sys = f"""Act as a World-Class B2B SaaS Growth Consultant. Perform an immediate, high-impact conversion audit on the provided website text. Your goal is to identify why the site is leaking revenue and provide a professional, executable strategy.
+    # 🤖 Agent 2: Builder (CFO-Grade Revenue Analysis)
+    builder_sys = f"""You are a Chief Growth Officer. You don't offer suggestions; you offer financial solutions.
+For each flaw found by the Scout, you MUST quantify the cost of doing nothing.
 
-**Follow these strict rules:**
+FORMAT (No tables):
 
-1. **NO INTRODUCTIONS.** Start immediately with the first finding.
-2. **NO TABLES.** Use the bulleted structure defined below.
-3. **TONE:** Brutal, specific, authoritative, and elite.
+### 🚨 FLAW: [Name]
+**REVENUE LEAK:** $[Estimated amount]/mo (Estimate based on industry standard SaaS benchmarks).
+**THE FIX:** [Concrete, specific technical/design step.]
+**ROI FORECAST:** [How much revenue we recover by fixing this immediately.]
 
-**Use this exact structure for each of the 3 findings:**
-
-### 🚨 FLAW: [Clear, punchy title]
-**PSYCHOLOGY GAP:** [Explain in one sentence why this hurts conversions from a user's perspective]
-**THE FIX:** [Provide a specific, technical, or design-led implementation]
-**ROI BUDGET:** [Estimated range]
-
-### 📋 ROADMAP
-
-- [Actionable step 1 starting with a verb]
-- [Actionable step 2 starting with a verb]
-- [Actionable step 3 starting with a verb]
-
-Budget constraints: {pricing_rules}. NO conversational text. Start the audit now."""
+TONE: Professional, authoritative, CFO-level.
+NO PLACEHOLDERS. If unsure, make a high-probability estimate based on industry standards.
+Budget constraints: {pricing_rules}. NO introductions. Start with the first flaw."""
     builder_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": builder_sys}, {"role": "user", "content": scout_report}], stream=True)
     full_builder_report = ""
     for chunk in builder_stream:
