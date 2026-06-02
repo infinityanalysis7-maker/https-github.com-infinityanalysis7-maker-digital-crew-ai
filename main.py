@@ -79,6 +79,19 @@ def classify_target_site(scraped_text: str) -> dict:
     except:
         return {"site_type": "B2B_SAAS", "core_conversion_goal": "User subscriptions", "allowed_pricing_tier": "medium"}
 
+def parse_final_output(text: str) -> str:
+    """Extract FINAL OUTPUT section from agent response, hiding internal thought steps."""
+    if "### FINAL OUTPUT" in text:
+        return text.split("### FINAL OUTPUT")[-1].strip()
+    return text
+
+# 🎯 USER CONTEXT (Customize this or inject from frontend)
+user_context = """
+User Identity: I am a SaaS Agency Owner specializing in AI Automation.
+My Service: We build custom AI chatbots that reduce customer support costs by 40%.
+Target Audience: We sell to E-commerce brands with $1M+ ARR.
+"""
+
 async def generate_crew_stream(target_url: str):
     site_text = fetch_real_website_text(target_url)
     meta = classify_target_site(site_text)
@@ -92,28 +105,49 @@ async def generate_crew_stream(target_url: str):
         "high": "$15k-$30k"
     }.get(pricing_tier, "$5k-$15k")
 
-    # 🤖 Agent 1: Scout (Stream Critical Flaws)
+    # 🤖 Agent 1: Scout (With Chain of Thought)
     scout_prompt = f"""You are a ruthless UX Auditor. Your goal is to identify revenue-killing friction points. 
 Identify 3 critical issues. Do not be vague. 
 Focus on: Conversion friction, trust signals, and user path clarity.
 
-FORMAT:
+**INTERNAL THOUGHT STEP (HIDE THIS IN FINAL OUTPUT):**
+ANALYZE: Break down the data to find friction points.
+CRITIQUE: List 2 reasons why your initial interpretation might be wrong.
+REFINE: Correct your analysis based on critique.
+
+**THEN PROVIDE FINAL OUTPUT BELOW:**
+
+### FINAL OUTPUT
+
 ### 🔍 [Name of Issue]
 **IMPACT:** [Explain why this kills conversion in one sentence.]
 **SIGNAL:** [Why this is a problem based on the URL provided.]"""
     scout_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": scout_prompt}, {"role": "user", "content": site_text}], stream=True)
     scout_report = ""
+    buffer = ""
+    in_final_output = False
     for chunk in scout_stream:
         token = chunk.choices[0].delta.content or ""
-        if token:
+        buffer += token
+        if "### FINAL OUTPUT" in buffer and not in_final_output:
+            in_final_output = True
+            token = buffer.split("### FINAL OUTPUT", 1)[-1]
+        if in_final_output:
             scout_report += token
             yield f"data: {json.dumps({'scout_analysis': token})}\n\n"
     
-    # 🤖 Agent 2: Builder (CFO-Grade Revenue Analysis)
+    # 🤖 Agent 2: Builder (CFO-Grade, With Chain of Thought)
     builder_sys = f"""You are a Chief Growth Officer. You don't offer suggestions; you offer financial solutions.
 For each flaw found by the Scout, you MUST quantify the cost of doing nothing.
 
-FORMAT (No tables):
+**INTERNAL THOUGHT STEP (HIDE THIS IN FINAL OUTPUT):**
+ANALYZE: Break down each flaw and estimate revenue impact.
+CRITIQUE: Are these estimates too conservative or too aggressive? What assumptions am I making?
+REFINE: Adjust estimates based on industry benchmarks and logic.
+
+**THEN PROVIDE FINAL OUTPUT BELOW:**
+
+### FINAL OUTPUT
 
 ### 🚨 FLAW: [Name]
 **REVENUE LEAK:** $[Estimated amount]/mo (Estimate based on industry standard SaaS benchmarks).
@@ -125,51 +159,93 @@ NO PLACEHOLDERS. If unsure, make a high-probability estimate based on industry s
 Budget constraints: {pricing_rules}. NO introductions. Start with the first flaw."""
     builder_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": builder_sys}, {"role": "user", "content": scout_report}], stream=True)
     full_builder_report = ""
+    buffer = ""
+    in_final_output = False
     for chunk in builder_stream:
         token = chunk.choices[0].delta.content or ""
-        if token:
+        buffer += token
+        if "### FINAL OUTPUT" in buffer and not in_final_output:
+            in_final_output = True
+            token = buffer.split("### FINAL OUTPUT", 1)[-1]
+        if in_final_output:
             full_builder_report += token
             yield f"data: {json.dumps({'builder_blueprint': token})}\n\n"
 
-    # 🤖 Agent 3: Salesman (Close-Ready Email)
+    # 🤖 Agent 3: Salesman (With Chain of Thought & User Context)
     salesman_sys = f"""You are a Senior B2B SaaS Closer. Write a 5-line outreach email.
 - NO PLACEHOLDERS like [Pain Point]. 
 - Infer the pain from the Builder's analysis and inject it into the email.
 - Tone: Direct, punchy, value-first.
-- NO FLUFF."""
+- NO FLUFF.
+
+**USER CONTEXT (Personalize your pitch to this identity):**
+{user_context}
+
+**INTERNAL THOUGHT STEP (HIDE THIS IN FINAL OUTPUT):**
+ANALYZE: What are the specific flaws and revenue leaks the Builder found?
+CRITIQUE: How does OUR service (AI chatbots for support cost reduction) directly solve these?
+REFINE: Craft an email that explicitly connects the flaw to our solution.
+
+**THEN PROVIDE FINAL OUTPUT BELOW:**
+
+### FINAL OUTPUT
+[5-line email here]"""
     salesman_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": salesman_sys}, {"role": "user", "content": full_builder_report}], stream=True)
     full_sales_pitch = ""
+    buffer = ""
+    in_final_output = False
     for chunk in salesman_stream:
         token = chunk.choices[0].delta.content or ""
-        if token:
+        buffer += token
+        if "### FINAL OUTPUT" in buffer and not in_final_output:
+            in_final_output = True
+            token = buffer.split("### FINAL OUTPUT", 1)[-1]
+        if in_final_output:
             full_sales_pitch += token
             yield f"data: {json.dumps({'salesman_pitch': token})}\n\n"
 
-    # 🤖 Agent 3.5: Verifier (Quality Assurance)
-    verifier_sys = f"""You are the Quality Assurance Director. Review the Builder and Salesman output above.
-CRITERIA FOR PASS:
-1. NO placeholders (brackets, empty tags).
-2. NO generic advice (e.g., "Improve your SEO"). Must be specific to the audit.
-3. NO hallucinations (Do not invent features the site doesn't have).
+    # 🤖 Agent 4: Reviewer (Quality Control & Alignment Gate)
+    reviewer_sys = f"""You are the Quality Control Director. Review the Builder's audit and the Salesman's email.
+CHECKLIST:
+1. Did the Salesman reference the SPECIFIC flaw the Builder found? (No generic language allowed)
+2. Is the email tone actually aligned with the User Identity provided?
+3. Is the ROI calculation plausible and backed by the Builder's analysis?
 
-If the output contains fluff or placeholders, REWRITE it to be elite and concrete.
-If the output is perfect, output only the word: "VERIFIED." """
-    verifier_input = f"BUILDER OUTPUT:\n{full_builder_report}\n\nSALESMAN OUTPUT:\n{full_sales_pitch}"
-    verifier_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": verifier_sys}, {"role": "user", "content": verifier_input}], stream=True)
-    full_verification = ""
-    for chunk in verifier_stream:
+If ANY of these fail, REWRITE the content to ensure 100% alignment.
+If ALL pass, output: "✅ ALIGNMENT VERIFIED"
+
+User Identity for context:
+{user_context}"""
+    reviewer_input = f"BUILDER AUDIT:\n{full_builder_report}\n\nSALESMAN EMAIL:\n{full_sales_pitch}"
+    reviewer_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": reviewer_sys}, {"role": "user", "content": reviewer_input}], stream=True)
+    full_review = ""
+    for chunk in reviewer_stream:
         token = chunk.choices[0].delta.content or ""
         if token:
-            full_verification += token
-            yield f"data: {json.dumps({'verification': token})}\n\n"
+            full_review += token
+            yield f"data: {json.dumps({'review_status': token})}\n\n"
 
-    # 🤖 Agent 4: LinkedIn (Short)
-    linkedin_sys = f"Draft a 2-sentence LinkedIn DM for {site_type}. Extremely conversational and direct. No greeting."
+    # 🤖 Agent 5: LinkedIn (With Chain of Thought)
+    linkedin_sys = f"""Draft a 2-sentence LinkedIn DM for {site_type}. Extremely conversational and direct. No greeting.
+Use the Builder's findings to inform the tone and message.
+
+**INTERNAL THOUGHT STEP:**
+ANALYZE: What's the hook from the Builder's findings?
+REFINE: Make it personal, not templated.
+
+**FINAL OUTPUT:**
+[2-sentence DM]"""
     linkedin_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": linkedin_sys}, {"role": "user", "content": full_builder_report}], stream=True)
     full_linkedin_pitch = ""
+    buffer = ""
+    in_final_output = False
     for chunk in linkedin_stream:
         token = chunk.choices[0].delta.content or ""
-        if token:
+        buffer += token
+        if "**FINAL OUTPUT:**" in buffer and not in_final_output:
+            in_final_output = True
+            token = buffer.split("**FINAL OUTPUT:**", 1)[-1]
+        if in_final_output:
             full_linkedin_pitch += token
             yield f"data: {json.dumps({'linkedin_pitch': token})}\n\n"
 
