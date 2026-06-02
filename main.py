@@ -121,23 +121,15 @@ My Service: We build custom AI chatbots that reduce customer support costs by 40
 Target Audience: We sell to E-commerce brands with $1M+ ARR.
 """
 
-    # 🤖 Agent 1: Scout (Collect full response, then stream clean output)
-    scout_prompt = f"""You are a ruthless UX Auditor. Your goal is to identify revenue-killing friction points. 
-Identify 3 critical issues. Do not be vague. 
-Focus on: Conversion friction, trust signals, and user path clarity.
-
-**INTERNAL THOUGHT STEP (HIDE THIS IN FINAL OUTPUT):**
-ANALYZE: Break down the data to find friction points.
-CRITIQUE: List 2 reasons why your initial interpretation might be wrong.
-REFINE: Correct your analysis based on critique.
-
-**THEN PROVIDE FINAL OUTPUT BELOW:**
-
-### FINAL OUTPUT
-
-### 🔍 [Name of Issue]
-**IMPACT:** [Explain why this kills conversion in one sentence.]
-**SIGNAL:** [Why this is a problem based on the URL provided.]"""
+    # 🤖 Agent 1: Scout (Aggressive Auditor - Master 10/10)
+    scout_prompt = f"""You are a top-tier Growth Auditor. Your work is read by C-level executives.
+- DO NOT use passive, soft language (e.g., 'potential,' 'could,' 'might'). 
+- Use active, direct language (e.g., 'is bleeding,' 'costs,' 'prevents,' 'kills').
+- Focus on the #1 conversion blocker on the page.
+- FORMAT:
+🔍 [NAME OF FLAW]
+IMPACT: [One sentence showing the revenue damage].
+SIGNAL: [One sentence explaining exactly where/how the site fails]."""
     
     scout_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": scout_prompt}, {"role": "user", "content": site_text}], stream=True)
     full_scout_raw = ""
@@ -151,26 +143,18 @@ REFINE: Correct your analysis based on critique.
     # Stream the clean output to frontend
     yield f"data: {json.dumps({'scout_analysis': scout_report})}\n\n"
 
-    # 🤖 Agent 2: Builder (Collect full response, then stream clean output)
-    builder_sys = f"""You are a Chief Growth Officer. You don't offer suggestions; you offer financial solutions.
-For each flaw found by the Scout, you MUST quantify the cost of doing nothing.
-
-**INTERNAL THOUGHT STEP (HIDE THIS IN FINAL OUTPUT):**
-ANALYZE: Break down each flaw and estimate revenue impact.
-CRITIQUE: Are these estimates too conservative or too aggressive? What assumptions am I making?
-REFINE: Adjust estimates based on industry benchmarks and logic.
-
-**THEN PROVIDE FINAL OUTPUT BELOW:**
-
-### FINAL OUTPUT
-
-### 🚨 FLAW: [Name]
-**REVENUE LEAK:** $[Estimated amount]/mo (Estimate based on industry standard SaaS benchmarks).
-**THE FIX:** [Concrete, specific technical/design step.]
-**ROI FORECAST:** [How much revenue we recover by fixing this immediately.]
-
-TONE: Professional, authoritative, CFO-level.
-NO PLACEHOLDERS. If unsure, make a high-probability estimate based on industry standards.
+    # 🤖 Agent 2: Builder (CFO Strategist - Master 10/10)
+    builder_sys = f"""You are a Chief Growth Officer modeling a turnaround strategy.
+- Quantify the Revenue Leak with specific dollar amounts ($).
+- THE FIX: Must be technical and specific (e.g., 'A/B test X,' 'Add Y button').
+- ROI FORECAST: Project the recovery amount.
+- FOR EACH FLAW, PROVIDE:
+  ### 🚨 FLAW: [Name]
+  **REVENUE LEAK:** $[amount]/mo
+  **THE FIX:** [specific technical step]
+  **ROI FORECAST:** $[recovery amount]/mo
+- MANDATORY DISCLAIMER: At the very end of your response, add:
+  'Note: Estimates are based on industry-standard SaaS benchmarks for strategic modeling purposes. Specific impact varies by site traffic.'
 Budget constraints: {pricing_rules}. NO introductions. Start with the first flaw."""
     
     builder_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": builder_sys}, {"role": "user", "content": scout_report}], stream=True)
@@ -193,26 +177,18 @@ Budget constraints: {pricing_rules}. NO introductions. Start with the first flaw
 - NO FLUFF.
 
 **USER CONTEXT (Personalize your pitch to this identity):**
-User Identity: I am a SaaS Agency Owner specializing in AI Automation.
-My Service: We build custom AI chatbots that reduce customer support costs by 40%.
-Target Audience: We sell to E-commerce brands with $1M+ ARR.
-
-**INTERNAL THOUGHT STEP (HIDE THIS IN FINAL OUTPUT):**
-ANALYZE: What are the specific flaws and revenue leaks the Builder found?
-CRITIQUE: How does OUR service directly solve these?
-REFINE: Craft an email that explicitly connects the flaw to our solution.
-
-**THEN PROVIDE FINAL OUTPUT BELOW:**
-
-### FINAL OUTPUT"""
-    
-    salesman_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": salesman_sys}, {"role": "user", "content": full_builder_report}], stream=True)
-    full_sales_raw = ""
-    for chunk in salesman_stream:
-        token = chunk.choices[0].delta.content or ""
-        full_sales_raw += token
-    
-    # Extract clean output after full collection
+User Identity: I am a SaaS ASynthesizer - Master 10/10 with Mandatory Mapping)
+    salesman_sys = f"""You are a Senior SaaS Closer. Your email MUST map directly to the audit data.
+- MANDATORY MAPPING:
+    1. Reference the Exact Flaw Name from the Builder (do not paraphrase).
+    2. Reference the Exact Revenue Leak ($) from the Builder (must include the dollar amount).
+- STRUCTURE:
+    LINE 1: The 'Pattern Interrupt' (Name the flaw and the $ amount lost).
+    LINE 2: The 'Problem' (Why it hurts their growth).
+    LINE 3: The 'Solution' (Your AI Agency's 40% cost reduction).
+    LINE 4: The 'CTA' (A low-friction next step).
+- NO GENERIC FLUFF. If you do not include the exact numbers and flaw names provided by the Builder, you are failing your job.
+- USER CONTEXT: You are a SaaS Agency Owner specializing in AI Automation. You build custom AI chatbots that reduce customer support costs by 40%. You sell to E-commerce brands with $1M+ ARR.ean output after full collection
     full_sales_pitch = extract_final_output(full_sales_raw)
     
     # Stream the clean output to frontend
@@ -226,17 +202,15 @@ CHECKLIST:
 3. Is the ROI calculation plausible and backed by the Builder's analysis?
 
 If ALL pass, output: "✅ ALIGNMENT VERIFIED"
-If ANY fail, output: "⚠️ MISALIGNMENT DETECTED"
+If ANY fail, output: "⚠️ MISGatekeeper - Master 10/10 with Rewrite Authority)
+    reviewer_sys = f"""You are the Quality Control Director. You hold the Salesman to a strict standard.
+VERIFY THESE 3 THINGS:
+1. Did the Salesman include the exact Flaw Name identified by the Builder? (Yes/No)
+2. Did the Salesman include the exact Dollar Amount ($) calculated by the Builder? (Yes/No)
+3. Is the tone direct and professional? (Yes/No)
 
-User Identity: Saas Agency Owner specializing in AI Automation. Service: Custom AI chatbots reducing support costs by 40%. Target: E-commerce brands with $1M+ ARR."""
-    
-    reviewer_input = f"BUILDER AUDIT:\n{full_builder_report}\n\nSALESMAN EMAIL:\n{full_sales_pitch}"
-    reviewer_response = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": reviewer_sys}, {"role": "user", "content": reviewer_input}])
-    review_status = reviewer_response.choices[0].message.content.strip()
-    yield f"data: {json.dumps({'review_status': review_status})}\n\n"
-
-    # 🤖 Agent 5: LinkedIn (Collect full response, then stream clean output)
-    linkedin_sys = f"""Draft a 2-sentence LinkedIn DM for {site_type}. Extremely conversational and direct. No greeting.
+IF ALL ARE YES: Output the Salesman email exactly as is.
+IF ANY ARE NO: Rewrite the email yourself, ensuring all data is perfectly synthesized. Make sure to include the exact flaw name and exact dollar amount from the Builder
 Use the Builder's findings to inform the tone and message.
 
 **INTERNAL THOUGHT STEP:**
