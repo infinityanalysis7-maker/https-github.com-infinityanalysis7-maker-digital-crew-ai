@@ -145,6 +145,24 @@ Budget constraints: {pricing_rules}. NO introductions. Start with the first flaw
             full_sales_pitch += token
             yield f"data: {json.dumps({'salesman_pitch': token})}\n\n"
 
+    # 🤖 Agent 3.5: Verifier (Quality Assurance)
+    verifier_sys = f"""You are the Quality Assurance Director. Review the Builder and Salesman output above.
+CRITERIA FOR PASS:
+1. NO placeholders (brackets, empty tags).
+2. NO generic advice (e.g., "Improve your SEO"). Must be specific to the audit.
+3. NO hallucinations (Do not invent features the site doesn't have).
+
+If the output contains fluff or placeholders, REWRITE it to be elite and concrete.
+If the output is perfect, output only the word: "VERIFIED." """
+    verifier_input = f"BUILDER OUTPUT:\n{full_builder_report}\n\nSALESMAN OUTPUT:\n{full_sales_pitch}"
+    verifier_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": verifier_sys}, {"role": "user", "content": verifier_input}], stream=True)
+    full_verification = ""
+    for chunk in verifier_stream:
+        token = chunk.choices[0].delta.content or ""
+        if token:
+            full_verification += token
+            yield f"data: {json.dumps({'verification': token})}\n\n"
+
     # 🤖 Agent 4: LinkedIn (Short)
     linkedin_sys = f"Draft a 2-sentence LinkedIn DM for {site_type}. Extremely conversational and direct. No greeting."
     linkedin_stream = client.chat.completions.create(model=FREE_BRAIN, messages=[{"role": "system", "content": linkedin_sys}, {"role": "user", "content": full_builder_report}], stream=True)
